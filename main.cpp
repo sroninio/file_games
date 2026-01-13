@@ -4,6 +4,9 @@
 #include <vector>
 #include <filesystem>
 #include <chrono>
+#include <fcntl.h>
+#include <unistd.h>
+#include <cstdlib>
 
 namespace fs = std::filesystem;
 
@@ -20,9 +23,16 @@ int main(int argc, char* argv[]) {
     if (argc >= 4) ITER = std::stoi(argv[3]);
     if (argc >= 5) PATH = argv[4];
     
+    // Align K to block size for O_DIRECT compatibility
+    const int BLOCK_SIZE = 512;
+    int aligned_K = ((K + BLOCK_SIZE - 1) / BLOCK_SIZE) * BLOCK_SIZE;
+    
     std::cout << "Parameters:" << std::endl;
     std::cout << "  N (number of files): " << N << std::endl;
     std::cout << "  K (file size in bytes): " << K << std::endl;
+    if (aligned_K != K) {
+        std::cout << "  K adjusted to " << aligned_K << " bytes for O_DIRECT alignment" << std::endl;
+    }
     std::cout << "  ITER (iterations): " << ITER << std::endl;
     std::cout << "  PATH (directory): " << PATH << std::endl;
     std::cout << std::endl;
@@ -49,13 +59,13 @@ int main(int argc, char* argv[]) {
     }
     std::cout << std::endl;
     
-    // Step 1: Create N files, each of size K bytes
+    // Step 1: Create N files, each of size aligned_K bytes
     std::cout << "Creating " << N << " files..." << std::endl;
     auto start_create = std::chrono::high_resolution_clock::now();
     
-    std::vector<char> buffer(K, 'A');  // Fill buffer with 'A' characters
+    std::vector<char> buffer(aligned_K, 'A');  // Fill buffer with 'A' characters
     // Create some variation in the data
-    for (int i = 0; i < K; i++) {
+    for (int i = 0; i < aligned_K; i++) {
         buffer[i] = 'A' + (i % 26);
     }
     
@@ -68,7 +78,7 @@ int main(int argc, char* argv[]) {
             return 1;
         }
         
-        file.write(buffer.data(), K);
+        file.write(buffer.data(), aligned_K);
         file.close();
     }
     
@@ -77,11 +87,18 @@ int main(int argc, char* argv[]) {
     std::cout << "Created " << N << " files in " << duration_create.count() << " ms" << std::endl;
     std::cout << std::endl;
     
-    // Step 2: Perform ITER iterations
-    std::cout << "Starting " << ITER << " iterations..." << std::endl;
-    auto start_read = std::chrono::high_resolution_clock::now();
+    // Step 2: Perform ITER iterations with O_DIRECT
+    std::cout << "Starting " << ITER << " iterations with O_DIRECT..." << std::endl;
     
-    std::vector<char> read_buffer(K);
+    // Allocate aligned buffer for O_DIRECT
+    void* read_buffer_raw;
+    if (posix_memalign(&read_buffer_raw, BLOCK_SIZE, aligned_K) != 0) {
+        std::cerr << "Error allocating aligned buffer" << std::endl;
+        return 1;
+    }
+    char* read_buffer = static_cast<char*>(read_buffer_raw);
+    
+    auto start_read = std::chrono::high_resolution_clock::now();
     long long total_bytes_read = 0;
     
     for (int i = 0; i < ITER; i++) {
@@ -89,27 +106,32 @@ int main(int argc, char* argv[]) {
         int file_num = (i % N) + 1;
         std::string filename = PATH + "/f" + std::to_string(file_num);
         
-        // 1. Open file i
-        std::ifstream file(filename, std::ios::binary);
+        // 1. Open file i with O_DIRECT flag
+        int fd = open(filename.c_str(), O_RDONLY | O_DIRECT);
         
-        if (!file) {
+        if (fd == -1) {
             std::cerr << "Error opening file: " << filename << std::endl;
+            free(read_buffer);
             return 1;
         }
         
         // 2. Synchronously read all content of file i
-        file.read(read_buffer.data(), K);
-        std::streamsize bytes_read = file.gcount();
-        total_bytes_read += bytes_read;
+        ssize_t bytes_read = read(fd, read_buffer, aligned_K);
+        if (bytes_read > 0) {
+            total_bytes_read += bytes_read;
+        }
         
         // 3. Close file i
-        file.close();
+        close(fd);
         
         // Print progress every 10% of iterations
         if ((i + 1) % (ITER / 10 == 0 ? 1 : ITER / 10) == 0) {
             std::cout << "  Completed iteration " << (i + 1) << " / " << ITER << std::endl;
         }
     }
+    
+    // Free aligned buffer
+    free(read_buffer);
     
     auto end_read = std::chrono::high_resolution_clock::now();
     auto duration_read = std::chrono::duration_cast<std::chrono::milliseconds>(end_read - start_read);

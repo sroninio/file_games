@@ -164,24 +164,22 @@ int main(int argc, char* argv[]) {
         
         // 3. Close file i
         close(fd);
-        
-        // Print progress every 10% of iterations
-        if ((i + 1) % (ITER / 10 == 0 ? 1 : ITER / 10) == 0) {
-            std::cout << "  Completed iteration " << (i + 1) << " / " << ITER << std::endl;
-        }
     }
     
     // Free aligned buffer
     free(read_buffer);
     
     auto end_read = std::chrono::high_resolution_clock::now();
-    auto duration_read = std::chrono::duration_cast<std::chrono::milliseconds>(end_read - start_read);
+    auto duration_read_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_read - start_read);
+    auto duration_read_sec = std::chrono::duration_cast<std::chrono::seconds>(end_read - start_read);
     
     std::cout << std::endl;
-    std::cout << "Completed " << ITER << " iterations in " << duration_read.count() << " ms" << std::endl;
+    std::cout << "Completed " << ITER << " iterations" << std::endl;
+    std::cout << "Total time: " << duration_read_sec.count() << " seconds (" 
+              << duration_read_ms.count() << " ms)" << std::endl;
     std::cout << "Total bytes read: " << total_bytes_read << std::endl;
     std::cout << "Average time per iteration: " 
-              << (duration_read.count() / (double)ITER) << " ms" << std::endl;
+              << (duration_read_ms.count() / (double)ITER) << " ms" << std::endl;
     
     return 0;
 }

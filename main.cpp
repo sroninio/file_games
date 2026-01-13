@@ -27,13 +27,27 @@ int main(int argc, char* argv[]) {
     std::cout << "  PATH (directory): " << PATH << std::endl;
     std::cout << std::endl;
     
-    // Create directory if it doesn't exist
+    // Delete all content in PATH directory if it exists
+    try {
+        if (fs::exists(PATH)) {
+            std::cout << "Removing existing directory and all its contents..." << std::endl;
+            fs::remove_all(PATH);
+            std::cout << "Directory cleaned." << std::endl;
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "Error removing directory: " << e.what() << std::endl;
+        return 1;
+    }
+    
+    // Create directory
     try {
         fs::create_directories(PATH);
+        std::cout << "Created directory: " << PATH << std::endl;
     } catch (const std::exception& e) {
         std::cerr << "Error creating directory: " << e.what() << std::endl;
         return 1;
     }
+    std::cout << std::endl;
     
     // Step 1: Create N files, each of size K bytes
     std::cout << "Creating " << N << " files..." << std::endl;

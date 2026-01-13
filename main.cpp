@@ -7,6 +7,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <cstdlib>
+#include <cerrno>
 
 namespace fs = std::filesystem;
 
@@ -71,15 +72,24 @@ int main(int argc, char* argv[]) {
     
     for (int i = 1; i <= N; i++) {
         std::string filename = PATH + "/f" + std::to_string(i);
-        std::ofstream file(filename, std::ios::binary);
         
-        if (!file) {
+        // Create file using POSIX API to ensure proper alignment
+        int fd = open(filename.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (fd == -1) {
             std::cerr << "Error creating file: " << filename << std::endl;
             return 1;
         }
         
-        file.write(buffer.data(), aligned_K);
-        file.close();
+        ssize_t written = write(fd, buffer.data(), aligned_K);
+        if (written != aligned_K) {
+            std::cerr << "Error writing file: " << filename << std::endl;
+            close(fd);
+            return 1;
+        }
+        
+        // Ensure data is written to disk
+        fsync(fd);
+        close(fd);
     }
     
     auto end_create = std::chrono::high_resolution_clock::now();
@@ -110,16 +120,41 @@ int main(int argc, char* argv[]) {
         int fd = open(filename.c_str(), O_RDONLY | O_DIRECT);
         
         if (fd == -1) {
-            std::cerr << "Error opening file: " << filename << std::endl;
-            free(read_buffer);
-            return 1;
+            std::cerr << "Error opening file with O_DIRECT: " << filename 
+                      << " (errno: " << errno << ")" << std::endl;
+            // Try without O_DIRECT as fallback
+            fd = open(filename.c_str(), O_RDONLY);
+            if (fd == -1) {
+                std::cerr << "Error opening file: " << filename << std::endl;
+                free(read_buffer);
+                return 1;
+            }
+            std::cout << "Warning: O_DIRECT not supported, reading without it" << std::endl;
         }
         
-        // 2. Synchronously read all content of file i
-        ssize_t bytes_read = read(fd, read_buffer, aligned_K);
-        if (bytes_read > 0) {
-            total_bytes_read += bytes_read;
+        // 2. Synchronously read all content of file i in chunks
+        ssize_t total_read = 0;
+        ssize_t remaining = aligned_K;
+        char* buffer_ptr = read_buffer;
+        
+        while (remaining > 0) {
+            ssize_t bytes_read = read(fd, buffer_ptr, remaining);
+            if (bytes_read < 0) {
+                std::cerr << "Error reading file " << filename 
+                          << " (errno: " << errno << ")" << std::endl;
+                close(fd);
+                free(read_buffer);
+                return 1;
+            }
+            if (bytes_read == 0) {
+                break;  // EOF
+            }
+            total_read += bytes_read;
+            buffer_ptr += bytes_read;
+            remaining -= bytes_read;
         }
+        
+        total_bytes_read += total_read;
         
         // 3. Close file i
         close(fd);

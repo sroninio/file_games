@@ -100,9 +100,14 @@ int main(int argc, char* argv[]) {
     // Step 2: Perform ITER iterations with O_DIRECT
     std::cout << "Starting " << ITER << " iterations with O_DIRECT..." << std::endl;
     
-    // Allocate aligned buffer for O_DIRECT
+    // Use chunk-based reading for large files
+    // Lustre typically requires 4KB alignment
+    const size_t CHUNK_SIZE = 4 * 1024 * 1024;  // 4 MB chunks
+    const size_t ALIGNMENT = 4096;  // Page alignment
+    
+    // Allocate aligned buffer for O_DIRECT (only for one chunk at a time)
     void* read_buffer_raw;
-    if (posix_memalign(&read_buffer_raw, BLOCK_SIZE, aligned_K) != 0) {
+    if (posix_memalign(&read_buffer_raw, ALIGNMENT, CHUNK_SIZE) != 0) {
         std::cerr << "Error allocating aligned buffer" << std::endl;
         return 1;
     }
@@ -133,12 +138,13 @@ int main(int argc, char* argv[]) {
         }
         
         // 2. Synchronously read all content of file i in chunks
-        ssize_t total_read = 0;
-        ssize_t remaining = aligned_K;
-        char* buffer_ptr = read_buffer;
+        ssize_t file_total_read = 0;
+        size_t file_remaining = aligned_K;
         
-        while (remaining > 0) {
-            ssize_t bytes_read = read(fd, buffer_ptr, remaining);
+        while (file_remaining > 0) {
+            size_t to_read = (file_remaining < CHUNK_SIZE) ? file_remaining : CHUNK_SIZE;
+            
+            ssize_t bytes_read = read(fd, read_buffer, to_read);
             if (bytes_read < 0) {
                 std::cerr << "Error reading file " << filename 
                           << " (errno: " << errno << ")" << std::endl;
@@ -149,12 +155,12 @@ int main(int argc, char* argv[]) {
             if (bytes_read == 0) {
                 break;  // EOF
             }
-            total_read += bytes_read;
-            buffer_ptr += bytes_read;
-            remaining -= bytes_read;
+            
+            file_total_read += bytes_read;
+            file_remaining -= bytes_read;
         }
         
-        total_bytes_read += total_read;
+        total_bytes_read += file_total_read;
         
         // 3. Close file i
         close(fd);

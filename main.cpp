@@ -19,6 +19,7 @@ int main(int argc, char* argv[]) {
     std::string PATH = "./test_files";  // Directory path
     bool CREATE_DELETE_MODE = true;  // If true: delete and create files; if false: use existing files
     bool DROP_CACHE_INITIAL = false;  // If true: drop cache at the beginning (requires root)
+    bool SKIP_READ = false;  // If true: only open/close files, skip the read operation
     
     // Parse command line arguments if provided
     if (argc >= 2) N = std::stoi(argv[1]);
@@ -27,6 +28,7 @@ int main(int argc, char* argv[]) {
     if (argc >= 5) PATH = argv[4];
     if (argc >= 6) CREATE_DELETE_MODE = (std::string(argv[5]) == "1" || std::string(argv[5]) == "true");
     if (argc >= 7) DROP_CACHE_INITIAL = (std::string(argv[6]) == "1" || std::string(argv[6]) == "true");
+    if (argc >= 8) SKIP_READ = (std::string(argv[7]) == "1" || std::string(argv[7]) == "true");
     
     // Align K to block size for O_DIRECT compatibility
     const int BLOCK_SIZE = 512;
@@ -164,23 +166,25 @@ int main(int argc, char* argv[]) {
         ssize_t file_total_read = 0;
         size_t file_remaining = aligned_K;
         
-        while (file_remaining > 0) {
-            size_t to_read = (file_remaining < CHUNK_SIZE) ? file_remaining : CHUNK_SIZE;
-            
-            ssize_t bytes_read = read(fd, read_buffer, to_read);
-            if (bytes_read < 0) {
-                std::cerr << "Error reading file " << filename 
-                          << " (errno: " << errno << ")" << std::endl;
-                close(fd);
-                free(read_buffer);
-                return 1;
+        if (!SKIP_READ) {
+            while (file_remaining > 0) {
+                size_t to_read = (file_remaining < CHUNK_SIZE) ? file_remaining : CHUNK_SIZE;
+                
+                ssize_t bytes_read = read(fd, read_buffer, to_read);
+                if (bytes_read < 0) {
+                    std::cerr << "Error reading file " << filename 
+                              << " (errno: " << errno << ")" << std::endl;
+                    close(fd);
+                    free(read_buffer);
+                    return 1;
+                }
+                if (bytes_read == 0) {
+                    break;  // EOF
+                }
+                
+                file_total_read += bytes_read;
+                file_remaining -= bytes_read;
             }
-            if (bytes_read == 0) {
-                break;  // EOF
-            }
-            
-            file_total_read += bytes_read;
-            file_remaining -= bytes_read;
         }
         
         total_bytes_read += file_total_read;

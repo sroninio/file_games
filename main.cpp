@@ -17,7 +17,8 @@ int main(int argc, char* argv[]) {
     int K = 1024;         // Size of each file in bytes (1 KB)
     int ITER = 100;       // Number of iterations
     std::string PATH = "./test_files";  // Directory path
-    bool CREATE_DELETE_MODE = true;  // If true: delete and create files; if false: drop cache
+    bool CREATE_DELETE_MODE = true;  // If true: delete and create files; if false: use existing files
+    bool DROP_CACHE_INITIAL = false;  // If true: drop cache at the beginning (requires root)
     
     // Parse command line arguments if provided
     if (argc >= 2) N = std::stoi(argv[1]);
@@ -25,6 +26,7 @@ int main(int argc, char* argv[]) {
     if (argc >= 4) ITER = std::stoi(argv[3]);
     if (argc >= 5) PATH = argv[4];
     if (argc >= 6) CREATE_DELETE_MODE = (std::string(argv[5]) == "1" || std::string(argv[5]) == "true");
+    if (argc >= 7) DROP_CACHE_INITIAL = (std::string(argv[6]) == "1" || std::string(argv[6]) == "true");
     
     // Align K to block size for O_DIRECT compatibility
     const int BLOCK_SIZE = 512;
@@ -38,7 +40,8 @@ int main(int argc, char* argv[]) {
     }
     std::cout << "  ITER (iterations): " << ITER << std::endl;
     std::cout << "  PATH (directory): " << PATH << std::endl;
-    std::cout << "  MODE: " << (CREATE_DELETE_MODE ? "Delete and create files" : "Drop cache") << std::endl;
+    std::cout << "  CREATE_DELETE_MODE: " << (CREATE_DELETE_MODE ? "enabled (delete and create files)" : "disabled (use existing files)") << std::endl;
+    std::cout << "  DROP_CACHE_INITIAL: " << (DROP_CACHE_INITIAL ? "enabled (requires root)" : "disabled") << std::endl;
     std::cout << std::endl;
     
     if (CREATE_DELETE_MODE) {
@@ -100,8 +103,10 @@ int main(int argc, char* argv[]) {
         auto duration_create = std::chrono::duration_cast<std::chrono::milliseconds>(end_create - start_create);
         std::cout << "Created " << N << " files in " << duration_create.count() << " ms" << std::endl;
         std::cout << std::endl;
-    } else {
-        // Drop cache mode - clear all caches before starting
+    }
+    
+    // Drop cache at the beginning if requested
+    if (DROP_CACHE_INITIAL) {
         std::cout << "Dropping all caches (requires root privileges)..." << std::endl;
         std::ofstream drop_cache("/proc/sys/vm/drop_caches");
         if (drop_cache) {

@@ -17,12 +17,14 @@ int main(int argc, char* argv[]) {
     int K = 1024;         // Size of each file in bytes (1 KB)
     int ITER = 100;       // Number of iterations
     std::string PATH = "./test_files";  // Directory path
+    bool CREATE_DELETE_MODE = true;  // If true: delete and create files; if false: drop cache
     
     // Parse command line arguments if provided
     if (argc >= 2) N = std::stoi(argv[1]);
     if (argc >= 3) K = std::stoi(argv[2]);
     if (argc >= 4) ITER = std::stoi(argv[3]);
     if (argc >= 5) PATH = argv[4];
+    if (argc >= 6) CREATE_DELETE_MODE = (std::string(argv[5]) == "1" || std::string(argv[5]) == "true");
     
     // Align K to block size for O_DIRECT compatibility
     const int BLOCK_SIZE = 512;
@@ -36,66 +38,82 @@ int main(int argc, char* argv[]) {
     }
     std::cout << "  ITER (iterations): " << ITER << std::endl;
     std::cout << "  PATH (directory): " << PATH << std::endl;
+    std::cout << "  MODE: " << (CREATE_DELETE_MODE ? "Delete and create files" : "Drop cache") << std::endl;
     std::cout << std::endl;
     
-    // Delete all content in PATH directory if it exists
-    try {
-        if (fs::exists(PATH)) {
-            std::cout << "Removing existing directory and all its contents..." << std::endl;
-            fs::remove_all(PATH);
-            std::cout << "Directory cleaned." << std::endl;
-        }
-    } catch (const std::exception& e) {
-        std::cerr << "Error removing directory: " << e.what() << std::endl;
-        return 1;
-    }
-    
-    // Create directory
-    try {
-        fs::create_directories(PATH);
-        std::cout << "Created directory: " << PATH << std::endl;
-    } catch (const std::exception& e) {
-        std::cerr << "Error creating directory: " << e.what() << std::endl;
-        return 1;
-    }
-    std::cout << std::endl;
-    
-    // Step 1: Create N files, each of size aligned_K bytes
-    std::cout << "Creating " << N << " files..." << std::endl;
-    auto start_create = std::chrono::high_resolution_clock::now();
-    
-    std::vector<char> buffer(aligned_K, 'A');  // Fill buffer with 'A' characters
-    // Create some variation in the data
-    for (int i = 0; i < aligned_K; i++) {
-        buffer[i] = 'A' + (i % 26);
-    }
-    
-    for (int i = 1; i <= N; i++) {
-        std::string filename = PATH + "/f" + std::to_string(i);
-        
-        // Create file using POSIX API to ensure proper alignment
-        int fd = open(filename.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
-        if (fd == -1) {
-            std::cerr << "Error creating file: " << filename << std::endl;
+    if (CREATE_DELETE_MODE) {
+        // Delete all content in PATH directory if it exists
+        try {
+            if (fs::exists(PATH)) {
+                std::cout << "Removing existing directory and all its contents..." << std::endl;
+                fs::remove_all(PATH);
+                std::cout << "Directory cleaned." << std::endl;
+            }
+        } catch (const std::exception& e) {
+            std::cerr << "Error removing directory: " << e.what() << std::endl;
             return 1;
         }
         
-        ssize_t written = write(fd, buffer.data(), aligned_K);
-        if (written != aligned_K) {
-            std::cerr << "Error writing file: " << filename << std::endl;
+        // Create directory
+        try {
+            fs::create_directories(PATH);
+            std::cout << "Created directory: " << PATH << std::endl;
+        } catch (const std::exception& e) {
+            std::cerr << "Error creating directory: " << e.what() << std::endl;
+            return 1;
+        }
+        std::cout << std::endl;
+        
+        // Step 1: Create N files, each of size aligned_K bytes
+        std::cout << "Creating " << N << " files..." << std::endl;
+        auto start_create = std::chrono::high_resolution_clock::now();
+        
+        std::vector<char> buffer(aligned_K, 'A');  // Fill buffer with 'A' characters
+        // Create some variation in the data
+        for (int i = 0; i < aligned_K; i++) {
+            buffer[i] = 'A' + (i % 26);
+        }
+        
+        for (int i = 1; i <= N; i++) {
+            std::string filename = PATH + "/f" + std::to_string(i);
+            
+            // Create file using POSIX API to ensure proper alignment
+            int fd = open(filename.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+            if (fd == -1) {
+                std::cerr << "Error creating file: " << filename << std::endl;
+                return 1;
+            }
+            
+            ssize_t written = write(fd, buffer.data(), aligned_K);
+            if (written != aligned_K) {
+                std::cerr << "Error writing file: " << filename << std::endl;
+                close(fd);
+                return 1;
+            }
+            
+            // Ensure data is written to disk
+            fsync(fd);
             close(fd);
-            return 1;
         }
         
-        // Ensure data is written to disk
-        fsync(fd);
-        close(fd);
+        auto end_create = std::chrono::high_resolution_clock::now();
+        auto duration_create = std::chrono::duration_cast<std::chrono::milliseconds>(end_create - start_create);
+        std::cout << "Created " << N << " files in " << duration_create.count() << " ms" << std::endl;
+        std::cout << std::endl;
+    } else {
+        // Drop cache mode - clear all caches before starting
+        std::cout << "Dropping all caches (requires root privileges)..." << std::endl;
+        std::ofstream drop_cache("/proc/sys/vm/drop_caches");
+        if (drop_cache) {
+            drop_cache << "3" << std::endl;  // Drop all caches
+            drop_cache.close();
+            std::cout << "Cache dropped successfully." << std::endl;
+        } else {
+            std::cerr << "Error: Could not drop cache. Need root privileges (run with sudo)." << std::endl;
+            return 1;
+        }
+        std::cout << std::endl;
     }
-    
-    auto end_create = std::chrono::high_resolution_clock::now();
-    auto duration_create = std::chrono::duration_cast<std::chrono::milliseconds>(end_create - start_create);
-    std::cout << "Created " << N << " files in " << duration_create.count() << " ms" << std::endl;
-    std::cout << std::endl;
     
     // Step 2: Perform ITER iterations with O_DIRECT
     std::cout << "Starting " << ITER << " iterations with O_DIRECT..." << std::endl;

@@ -10,6 +10,8 @@
 #include <cerrno>
 #include <algorithm>
 #include <random>
+#include <thread>
+#include <atomic>
 
 namespace fs = std::filesystem;
 
@@ -24,6 +26,7 @@ int main(int argc, char* argv[]) {
     bool SKIP_READ = false;  // If true: only open/close files, skip the read operation
     bool SKIP_WRITE = false;  // If true: create files but skip writing data (empty files)
     size_t CHUNK_SIZE = 4 * 1024 * 1024;  // Chunk size for reading (4 MB default)
+    bool PARALLEL_READ = false;  // If true: issue parallel reads for all chunks
     
     // Parse command line arguments if provided
     if (argc >= 2) N = std::stoi(argv[1]);
@@ -35,20 +38,19 @@ int main(int argc, char* argv[]) {
     if (argc >= 8) SKIP_READ = (std::string(argv[7]) == "1" || std::string(argv[7]) == "true");
     if (argc >= 9) SKIP_WRITE = (std::string(argv[8]) == "1" || std::string(argv[8]) == "true");
     if (argc >= 10) CHUNK_SIZE = std::stoull(argv[9]);
+    if (argc >= 11) PARALLEL_READ = (std::string(argv[10]) == "1" || std::string(argv[10]) == "true");
     
-    // Align K to block size for O_DIRECT compatibility
-    const int BLOCK_SIZE = 512;
-    long long aligned_K = ((K + BLOCK_SIZE - 1) / BLOCK_SIZE) * BLOCK_SIZE;
+    // Assume K is already aligned to 4096 bytes
+    const size_t ALIGNMENT = 4096;
+    long long aligned_K = K;
     
     std::cout << "Parameters:" << std::endl;
     std::cout << "  N (number of files): " << N << std::endl;
     std::cout << "  K (file size in bytes): " << K << std::endl;
-    if (aligned_K != K) {
-        std::cout << "  K adjusted to " << aligned_K << " bytes for O_DIRECT alignment" << std::endl;
-    }
     std::cout << "  ITER (iterations): " << ITER << std::endl;
     std::cout << "  PATH (directory): " << PATH << std::endl;
     std::cout << "  CHUNK_SIZE (read chunk size): " << CHUNK_SIZE << " bytes" << std::endl;
+    std::cout << "  PARALLEL_READ: " << (PARALLEL_READ ? "enabled" : "disabled (sequential)") << std::endl;
     std::cout << "  CREATE_DELETE_MODE: " << (CREATE_DELETE_MODE ? "enabled (delete and create files)" : "disabled (use existing files)") << std::endl;
     std::cout << "  DROP_CACHE_INITIAL: " << (DROP_CACHE_INITIAL ? "enabled (requires root)" : "disabled") << std::endl;
     std::cout << "  SKIP_READ: " << (SKIP_READ ? "enabled (only open/close)" : "disabled (full read)") << std::endl;
@@ -87,9 +89,9 @@ int main(int argc, char* argv[]) {
             
             if (!SKIP_WRITE) {
                 // Use dd to copy from /dev/urandom directly to file (no intermediate buffer in our code)
-                // Since aligned_K is already aligned to 512 bytes, use bs=512
+                // Since aligned_K is already aligned to 4096 bytes, use bs=4096
                 std::string cmd = "dd if=/dev/urandom of=\"" + filename + 
-                                  "\" bs=512 count=" + std::to_string(aligned_K / 512) +
+                                  "\" bs=4096 count=" + std::to_string(aligned_K / 4096) +
                                   " iflag=fullblock status=none 2>&1";
                 int ret = system(cmd.c_str());
                 if (ret != 0) {
@@ -144,14 +146,15 @@ int main(int argc, char* argv[]) {
     // Step 2: Perform ITER iterations with O_DIRECT
     if (SKIP_READ) {
         std::cout << "Starting " << ITER << " iterations (open/close only)..." << std::endl;
+    } else if (PARALLEL_READ) {
+        long long num_chunks = aligned_K / CHUNK_SIZE;
+        std::cout << "Starting " << ITER << " iterations with O_DIRECT (parallel: " 
+                  << num_chunks << " threads per file)..." << std::endl;
     } else {
         std::cout << "Starting " << ITER << " iterations with O_DIRECT..." << std::endl;
     }
     
     // Use chunk-based reading for large files
-    // Lustre typically requires 4KB alignment
-    const size_t ALIGNMENT = 4096;  // Page alignment
-    
     // Allocate aligned buffer for O_DIRECT (only for one chunk at a time)
     void* read_buffer_raw;
     if (posix_memalign(&read_buffer_raw, ALIGNMENT, CHUNK_SIZE) != 0) {
@@ -196,28 +199,75 @@ int main(int argc, char* argv[]) {
             std::cout << "Warning: O_DIRECT not supported, reading without it" << std::endl;
         }
         
-        // 2. Synchronously read all content of file i in chunks
+        // 2. Read all content of file i
         ssize_t file_total_read = 0;
-        size_t file_remaining = aligned_K;
         
         if (!SKIP_READ) {
-            while (file_remaining > 0) {
-                size_t to_read = (file_remaining < CHUNK_SIZE) ? file_remaining : CHUNK_SIZE;
+            if (PARALLEL_READ) {
+                // Parallel reading: issue file_size/chunk_size parallel reads
+                long long num_chunks = aligned_K / CHUNK_SIZE;
+                std::atomic<bool> error_occurred(false);
+                std::atomic<long long> total_read(0);
+                std::vector<std::thread> threads;
                 
-                ssize_t bytes_read = read(fd, read_buffer, to_read);
-                if (bytes_read < 0) {
-                    std::cerr << "Error reading file " << filename 
-                              << " (errno: " << errno << ")" << std::endl;
+                for (long long chunk_idx = 0; chunk_idx < num_chunks; chunk_idx++) {
+                    threads.emplace_back([&, chunk_idx]() {
+                        off_t offset = chunk_idx * CHUNK_SIZE;
+                        
+                        // Allocate thread-local aligned buffer
+                        void* thread_buffer_raw;
+                        if (posix_memalign(&thread_buffer_raw, ALIGNMENT, CHUNK_SIZE) != 0) {
+                            error_occurred = true;
+                            return;
+                        }
+                        char* thread_buffer = static_cast<char*>(thread_buffer_raw);
+                        
+                        // Use pread to read from specific offset
+                        ssize_t bytes_read = pread(fd, thread_buffer, CHUNK_SIZE, offset);
+                        if (bytes_read != (ssize_t)CHUNK_SIZE) {
+                            error_occurred = true;
+                        } else {
+                            total_read += bytes_read;
+                        }
+                        
+                        free(thread_buffer);
+                    });
+                }
+                
+                // Wait for all threads to complete
+                for (auto& thread : threads) {
+                    thread.join();
+                }
+                
+                if (error_occurred) {
+                    std::cerr << "Error in parallel read of file " << filename << std::endl;
                     close(fd);
                     free(read_buffer);
                     return 1;
                 }
-                if (bytes_read == 0) {
-                    break;  // EOF
-                }
                 
-                file_total_read += bytes_read;
-                file_remaining -= bytes_read;
+                file_total_read = total_read.load();
+            } else {
+                // Sequential reading
+                size_t file_remaining = aligned_K;
+                while (file_remaining > 0) {
+                    size_t to_read = (file_remaining < CHUNK_SIZE) ? file_remaining : CHUNK_SIZE;
+                    
+                    ssize_t bytes_read = read(fd, read_buffer, to_read);
+                    if (bytes_read < 0) {
+                        std::cerr << "Error reading file " << filename 
+                                  << " (errno: " << errno << ")" << std::endl;
+                        close(fd);
+                        free(read_buffer);
+                        return 1;
+                    }
+                    if (bytes_read == 0) {
+                        break;  // EOF
+                    }
+                    
+                    file_total_read += bytes_read;
+                    file_remaining -= bytes_read;
+                }
             }
         }
         

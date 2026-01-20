@@ -16,7 +16,7 @@ namespace fs = std::filesystem;
 int main(int argc, char* argv[]) {
     // Parameters
     int N = 10;           // Number of files
-    int K = 1024;         // Size of each file in bytes (1 KB)
+    long long K = 1024;   // Size of each file in bytes (1 KB)
     int ITER = 100;       // Number of iterations
     std::string PATH = "./test_files";  // Directory path
     bool CREATE_DELETE_MODE = true;  // If true: delete and create files; if false: use existing files
@@ -26,7 +26,7 @@ int main(int argc, char* argv[]) {
     
     // Parse command line arguments if provided
     if (argc >= 2) N = std::stoi(argv[1]);
-    if (argc >= 3) K = std::stoi(argv[2]);
+    if (argc >= 3) K = std::stoll(argv[2]);
     if (argc >= 4) ITER = std::stoi(argv[3]);
     if (argc >= 5) PATH = argv[4];
     if (argc >= 6) CREATE_DELETE_MODE = (std::string(argv[5]) == "1" || std::string(argv[5]) == "true");
@@ -36,7 +36,7 @@ int main(int argc, char* argv[]) {
     
     // Align K to block size for O_DIRECT compatibility
     const int BLOCK_SIZE = 512;
-    int aligned_K = ((K + BLOCK_SIZE - 1) / BLOCK_SIZE) * BLOCK_SIZE;
+    long long aligned_K = ((K + BLOCK_SIZE - 1) / BLOCK_SIZE) * BLOCK_SIZE;
     
     std::cout << "Parameters:" << std::endl;
     std::cout << "  N (number of files): " << N << std::endl;

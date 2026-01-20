@@ -220,6 +220,15 @@ int main(int argc, char* argv[]) {
         
         // 3. Close file i
         close(fd);
+        
+        // Print progress every 1000 iterations
+        if ((i + 1) % 1000 == 0) {
+            auto current_time = std::chrono::high_resolution_clock::now();
+            auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(current_time - start_read);
+            double avg_time = elapsed_ms.count() / (double)(i + 1);
+            std::cout << "  Completed " << (i + 1) << " iterations, avg time per iteration: " 
+                      << avg_time << " ms" << std::endl;
+        }
     }
     
     // Free aligned buffer

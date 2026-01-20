@@ -22,6 +22,7 @@ int main(int argc, char* argv[]) {
     bool CREATE_DELETE_MODE = true;  // If true: delete and create files; if false: use existing files
     bool DROP_CACHE_INITIAL = false;  // If true: drop cache at the beginning (requires root)
     bool SKIP_READ = false;  // If true: only open/close files, skip the read operation
+    bool SKIP_WRITE = false;  // If true: create files but skip writing data (empty files)
     
     // Parse command line arguments if provided
     if (argc >= 2) N = std::stoi(argv[1]);
@@ -31,6 +32,7 @@ int main(int argc, char* argv[]) {
     if (argc >= 6) CREATE_DELETE_MODE = (std::string(argv[5]) == "1" || std::string(argv[5]) == "true");
     if (argc >= 7) DROP_CACHE_INITIAL = (std::string(argv[6]) == "1" || std::string(argv[6]) == "true");
     if (argc >= 8) SKIP_READ = (std::string(argv[7]) == "1" || std::string(argv[7]) == "true");
+    if (argc >= 9) SKIP_WRITE = (std::string(argv[8]) == "1" || std::string(argv[8]) == "true");
     
     // Align K to block size for O_DIRECT compatibility
     const int BLOCK_SIZE = 512;
@@ -46,6 +48,8 @@ int main(int argc, char* argv[]) {
     std::cout << "  PATH (directory): " << PATH << std::endl;
     std::cout << "  CREATE_DELETE_MODE: " << (CREATE_DELETE_MODE ? "enabled (delete and create files)" : "disabled (use existing files)") << std::endl;
     std::cout << "  DROP_CACHE_INITIAL: " << (DROP_CACHE_INITIAL ? "enabled (requires root)" : "disabled") << std::endl;
+    std::cout << "  SKIP_READ: " << (SKIP_READ ? "enabled (only open/close)" : "disabled (full read)") << std::endl;
+    std::cout << "  SKIP_WRITE: " << (SKIP_WRITE ? "enabled (create empty files)" : "disabled (write data)") << std::endl;
     std::cout << std::endl;
     
     if (CREATE_DELETE_MODE) {
@@ -91,21 +95,28 @@ int main(int argc, char* argv[]) {
                 return 1;
             }
             
-            ssize_t written = write(fd, buffer.data(), aligned_K);
-            if (written != aligned_K) {
-                std::cerr << "Error writing file: " << filename << std::endl;
-                close(fd);
-                return 1;
+            if (!SKIP_WRITE) {
+                ssize_t written = write(fd, buffer.data(), aligned_K);
+                if (written != aligned_K) {
+                    std::cerr << "Error writing file: " << filename << std::endl;
+                    close(fd);
+                    return 1;
+                }
+                
+                // Ensure data is written to disk
+                fsync(fd);
             }
             
-            // Ensure data is written to disk
-            fsync(fd);
             close(fd);
         }
         
         auto end_create = std::chrono::high_resolution_clock::now();
         auto duration_create = std::chrono::duration_cast<std::chrono::milliseconds>(end_create - start_create);
-        std::cout << "Created " << N << " files in " << duration_create.count() << " ms" << std::endl;
+        if (SKIP_WRITE) {
+            std::cout << "Created " << N << " files (without writing data) in " << duration_create.count() << " ms" << std::endl;
+        } else {
+            std::cout << "Created " << N << " files in " << duration_create.count() << " ms" << std::endl;
+        }
         std::cout << std::endl;
     }
     
@@ -125,7 +136,11 @@ int main(int argc, char* argv[]) {
     }
     
     // Step 2: Perform ITER iterations with O_DIRECT
-    std::cout << "Starting " << ITER << " iterations with O_DIRECT..." << std::endl;
+    if (SKIP_READ) {
+        std::cout << "Starting " << ITER << " iterations (open/close only)..." << std::endl;
+    } else {
+        std::cout << "Starting " << ITER << " iterations with O_DIRECT..." << std::endl;
+    }
     
     // Use chunk-based reading for large files
     // Lustre typically requires 4KB alignment

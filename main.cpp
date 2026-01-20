@@ -79,35 +79,29 @@ int main(int argc, char* argv[]) {
         std::cout << "Creating " << N << " files..." << std::endl;
         auto start_create = std::chrono::high_resolution_clock::now();
         
-        std::vector<char> buffer(aligned_K, 'A');  // Fill buffer with 'A' characters
-        // Create some variation in the data
-        for (int i = 0; i < aligned_K; i++) {
-            buffer[i] = 'A' + (i % 26);
-        }
-        
         for (int i = 1; i <= N; i++) {
             std::string filename = PATH + "/f" + std::to_string(i);
             
-            // Create file using POSIX API to ensure proper alignment
-            int fd = open(filename.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
-            if (fd == -1) {
-                std::cerr << "Error creating file: " << filename << std::endl;
-                return 1;
-            }
-            
             if (!SKIP_WRITE) {
-                ssize_t written = write(fd, buffer.data(), aligned_K);
-                if (written != aligned_K) {
-                    std::cerr << "Error writing file: " << filename << std::endl;
-                    close(fd);
+                // Use dd to copy from /dev/urandom directly to file (no intermediate buffer in our code)
+                // Since aligned_K is already aligned to 512 bytes, use bs=512
+                std::string cmd = "dd if=/dev/urandom of=\"" + filename + 
+                                  "\" bs=512 count=" + std::to_string(aligned_K / 512) +
+                                  " iflag=fullblock status=none 2>&1";
+                int ret = system(cmd.c_str());
+                if (ret != 0) {
+                    std::cerr << "Error creating file with dd: " << filename << std::endl;
                     return 1;
                 }
-                
-                // Ensure data is written to disk
-                fsync(fd);
+            } else {
+                // Just create empty file
+                int fd = open(filename.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+                if (fd == -1) {
+                    std::cerr << "Error creating file: " << filename << std::endl;
+                    return 1;
+                }
+                close(fd);
             }
-            
-            close(fd);
             
             // Print progress every 1000 files
             if (i % 1000 == 0) {

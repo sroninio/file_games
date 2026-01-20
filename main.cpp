@@ -23,6 +23,7 @@ int main(int argc, char* argv[]) {
     bool DROP_CACHE_INITIAL = false;  // If true: drop cache at the beginning (requires root)
     bool SKIP_READ = false;  // If true: only open/close files, skip the read operation
     bool SKIP_WRITE = false;  // If true: create files but skip writing data (empty files)
+    size_t CHUNK_SIZE = 4 * 1024 * 1024;  // Chunk size for reading (4 MB default)
     
     // Parse command line arguments if provided
     if (argc >= 2) N = std::stoi(argv[1]);
@@ -33,6 +34,7 @@ int main(int argc, char* argv[]) {
     if (argc >= 7) DROP_CACHE_INITIAL = (std::string(argv[6]) == "1" || std::string(argv[6]) == "true");
     if (argc >= 8) SKIP_READ = (std::string(argv[7]) == "1" || std::string(argv[7]) == "true");
     if (argc >= 9) SKIP_WRITE = (std::string(argv[8]) == "1" || std::string(argv[8]) == "true");
+    if (argc >= 10) CHUNK_SIZE = std::stoull(argv[9]);
     
     // Align K to block size for O_DIRECT compatibility
     const int BLOCK_SIZE = 512;
@@ -46,6 +48,7 @@ int main(int argc, char* argv[]) {
     }
     std::cout << "  ITER (iterations): " << ITER << std::endl;
     std::cout << "  PATH (directory): " << PATH << std::endl;
+    std::cout << "  CHUNK_SIZE (read chunk size): " << CHUNK_SIZE << " bytes" << std::endl;
     std::cout << "  CREATE_DELETE_MODE: " << (CREATE_DELETE_MODE ? "enabled (delete and create files)" : "disabled (use existing files)") << std::endl;
     std::cout << "  DROP_CACHE_INITIAL: " << (DROP_CACHE_INITIAL ? "enabled (requires root)" : "disabled") << std::endl;
     std::cout << "  SKIP_READ: " << (SKIP_READ ? "enabled (only open/close)" : "disabled (full read)") << std::endl;
@@ -147,7 +150,6 @@ int main(int argc, char* argv[]) {
     
     // Use chunk-based reading for large files
     // Lustre typically requires 4KB alignment
-    const size_t CHUNK_SIZE = 4 * 1024 * 1024;  // 4 MB chunks
     const size_t ALIGNMENT = 4096;  // Page alignment
     
     // Allocate aligned buffer for O_DIRECT (only for one chunk at a time)

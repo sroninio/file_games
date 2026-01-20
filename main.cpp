@@ -8,6 +8,8 @@
 #include <unistd.h>
 #include <cstdlib>
 #include <cerrno>
+#include <algorithm>
+#include <random>
 
 namespace fs = std::filesystem;
 
@@ -138,12 +140,24 @@ int main(int argc, char* argv[]) {
     }
     char* read_buffer = static_cast<char*>(read_buffer_raw);
     
+    // Create a permutation of file indices 1..N
+    std::vector<int> file_permutation(N);
+    for (int i = 1; i <= N; i++) {
+        file_permutation[i - 1] = i;  // Files are numbered 1 to N
+    }
+    // Shuffle the permutation for random access pattern
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::shuffle(file_permutation.begin(), file_permutation.end(), gen);
+    
+    std::cout << "Created random permutation of " << N << " files" << std::endl;
+    
     auto start_read = std::chrono::high_resolution_clock::now();
     long long total_bytes_read = 0;
     
     for (int i = 0; i < ITER; i++) {
-        // Calculate which file to read (cycle through files 1 to N)
-        int file_num = (i % N) + 1;
+        // Use permutation to access files in random order
+        int file_num = file_permutation[i % N];
         std::string filename = PATH + "/f" + std::to_string(file_num);
         
         // 1. Open file i with O_DIRECT flag

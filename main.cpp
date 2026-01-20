@@ -108,6 +108,15 @@ int main(int argc, char* argv[]) {
             }
             
             close(fd);
+            
+            // Print progress every 1000 files
+            if (i % 1000 == 0) {
+                auto current_time = std::chrono::high_resolution_clock::now();
+                auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(current_time - start_create);
+                double avg_time = elapsed_ms.count() / (double)i;
+                std::cout << "  Created " << i << " files, avg time per file: " 
+                          << avg_time << " ms" << std::endl;
+            }
         }
         
         auto end_create = std::chrono::high_resolution_clock::now();

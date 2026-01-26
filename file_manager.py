@@ -25,8 +25,10 @@ class RateLimiter:
                 
                 if self.bytes_in_curr_second + bytes_to_allow <= self.limit_bytes_per_second:
                     self.bytes_in_curr_second += bytes_to_allow
-                    print(f"[RateLimiter] Second: {self.curr_second}, Bytes used: {self.bytes_in_curr_second}/{self.limit_bytes_per_second}")
                     break            
+                else:
+                    print(f"[RateLimiter] Second: {self.curr_second}, Request size: {bytes_to_allow}, Bytes used: {self.bytes_in_curr_second}/{self.limit_bytes_per_second}")
+
             time_to_sleep = (int(current_timestamp) + 1) - current_timestamp
             time.sleep(time_to_sleep)
                 

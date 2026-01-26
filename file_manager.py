@@ -212,15 +212,15 @@ def main():
     import argparse
     
     parser = argparse.ArgumentParser(description='Run file system benchmark')
-    parser.add_argument('max_inflight_requests', type=int, help='Maximum number of inflight requests')
-    parser.add_argument('max_write_waiters', type=int, help='Maximum number of write waiters')
-    parser.add_argument('num_workers_per_single_request', type=int, help='Number of workers per single request')
-    parser.add_argument('kv_base_path', type=str, help='Base path for KV files')
-    parser.add_argument('num_files', type=int, help='Number of files to create')
-    parser.add_argument('file_size', type=int, help='Size of each file in bytes')
-    parser.add_argument('requests_to_complete', type=int, help='Number of requests to complete')
-    parser.add_argument('rate_limit_bytes_per_second', type=int, help='Rate limit in bytes per second (0 = no limit)')
-    parser.add_argument('file_manager_type', type=str, choices=['kvc2', 'filemanager'], help='Type of file manager: kvc2 or filemanager')
+    parser.add_argument('--max_inflight_requests', type=int, required=True, help='Maximum number of inflight requests')
+    parser.add_argument('--max_write_waiters', type=int, required=True, help='Maximum number of write waiters')
+    parser.add_argument('--num_workers_per_single_request', type=int, required=True, help='Number of workers per single request')
+    parser.add_argument('--kv_base_path', type=str, required=True, help='Base path for KV files')
+    parser.add_argument('--num_files', type=int, required=True, help='Number of files to create')
+    parser.add_argument('--file_size', type=int, required=True, help='Size of each file in bytes')
+    parser.add_argument('--requests_to_complete', type=int, required=True, help='Number of requests to complete')
+    parser.add_argument('--rate_limit_bytes_per_second', type=int, required=True, help='Rate limit in bytes per second (0 = no limit)')
+    parser.add_argument('--file_manager_type', type=str, required=True, choices=['kvc2', 'filemanager'], help='Type of file manager: kvc2 or filemanager')
     
     args = parser.parse_args()
     

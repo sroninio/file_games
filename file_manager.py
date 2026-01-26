@@ -206,10 +206,13 @@ class System:
         end_time = time.time()
         total_time = end_time - start_time
         overall_bw = self.completed_requests / total_time
+        semaphore_value = self.file_manager.write_semaphore._value
         print(f"\nBenchmark completed!")
         print(f"Total requests: {self.completed_requests}")
         print(f"Total time: {total_time:.2f} seconds")
         print(f"Overall BW: {overall_bw:.2f} req/s")
+        print(f"Final semaphore value: {semaphore_value}")
+        
 
 
 def main():

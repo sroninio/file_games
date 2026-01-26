@@ -48,7 +48,7 @@ class EfficientRandomPopContainer:
         return element
 
 class FileManager:
-    def __init__(self, base_path: str, num_files: int, file_size: int, num_workers: int, max_write_waiters: int):
+    def __init__(self, base_path: str, num_files: int, file_size: int, num_workers: int, max_write_waiters: int, rate_limit_bytes_per_second: int):
         self.base_path = base_path
         self.num_files = num_files
         self.file_size = file_size
@@ -57,7 +57,8 @@ class FileManager:
         self.files_lock = Lock()  
         self.next_id = 0
         self.dummy_buf = bytearray(file_size)
-        self.write_semaphore = BoundedSemaphore(max_write_waiters)  
+        self.write_semaphore = BoundedSemaphore(max_write_waiters)
+        self.rate_limiter = RateLimitter(rate_limit_bytes_per_second) if rate_limit_bytes_per_second > 0 else None  
         
         if os.path.exists(self.base_path):
             subprocess.run(f"rm -rf {self.base_path}", shell=True, check=True)
@@ -66,12 +67,14 @@ class FileManager:
         for _ in range(num_files):
             self.write_kv_single_file(False)
     
-    def write_kv_single_file(self, to_delete): 
+    def write_kv_single_file(self, to_delete):
         self.write_semaphore.acquire()
         if to_delete:
             file_name_to_delete = self.pop_random_file()
             os.remove(file_name_to_delete) 
         file_name_to_create = self.create_file_name()
+        if self.rate_limiter:
+            self.rate_limiter.wait_for_allowance(self.file_size)
         with open(file_name_to_create, 'wb') as f:
             f.write(self.dummy_buf)
         self.add_file(file_name_to_create)
@@ -85,6 +88,8 @@ class FileManager:
 
     def read_kv_single_file(self):
         file_name = self.pop_random_file()
+        if self.rate_limiter:
+            self.rate_limiter.wait_for_allowance(self.file_size)
         with open(file_name, 'rb') as f:
             dummy_read_buf = f.read(self.file_size)
         self.add_file(file_name)
@@ -114,12 +119,12 @@ class FileManager:
      
 
 class System:
-    def __init__(self, max_inflight_requests, max_write_waiters, num_workers_per_single_request, kv_base_path, num_files, file_size, requests_to_complete):
+    def __init__(self, max_inflight_requests, max_write_waiters, num_workers_per_single_request, kv_base_path, num_files, file_size, requests_to_complete, rate_limit_bytes_per_second):
         self.max_inflight_requests = max_inflight_requests
         self.completed_requests = 0
         self.requests_to_complete = requests_to_complete
         self.num_workers_per_single_request = num_workers_per_single_request
-        self.file_manager = FileManager(kv_base_path, num_files, file_size, num_workers_per_single_request, max_write_waiters)
+        self.file_manager = FileManager(kv_base_path, num_files, file_size, num_workers_per_single_request, max_write_waiters, rate_limit_bytes_per_second)
 
             
     async def execute_single_request(self):
@@ -170,6 +175,7 @@ def main():
     parser.add_argument('num_files', type=int, help='Number of files to create')
     parser.add_argument('file_size', type=int, help='Size of each file in bytes')
     parser.add_argument('requests_to_complete', type=int, help='Number of requests to complete')
+    parser.add_argument('rate_limit_bytes_per_second', type=int, help='Rate limit in bytes per second (0 = no limit)')
     
     args = parser.parse_args()
     
@@ -180,7 +186,8 @@ def main():
         args.kv_base_path,
         args.num_files,
         args.file_size,
-        args.requests_to_complete
+        args.requests_to_complete,
+        args.rate_limit_bytes_per_second
     )
     
     asyncio.run(system.run_benchmark())

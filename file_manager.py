@@ -28,7 +28,7 @@ class RateLimiter:
                     break            
                 else:
                     op_type = "READ" if is_read else "WRITE"
-                    print(f"[RateLimiter] {op_type} - Second: {self.curr_second}, Request size: {bytes_to_allow}, Bytes used: {self.bytes_in_curr_second}/{self.limit_bytes_per_second}")
+                    print(f"[RateLimiter] {op_type} - Second: {self.curr_second}, Request size: {bytes_to_allow}, Bytes used: {self.bytes_in_curr_second}/{self.limit_bytes_per_second}", flush=True)
 
             time_to_sleep = (int(current_timestamp) + 1) - current_timestamp
             time.sleep(time_to_sleep)
@@ -208,7 +208,9 @@ class System:
         total_time = end_time - start_time
         overall_bw = self.completed_requests / total_time
         semaphore_value = self.file_manager.write_semaphore._value
-        print(f"\nBenchmark completed!")
+        print(f"\n{'='*60}", flush=True)
+        print(f"Benchmark completed!", flush=True)
+        print(f"{'='*60}", flush=True)
         print(f"Total requests: {self.completed_requests}")
         print(f"Total time: {total_time:.2f} seconds")
         print(f"Overall BW: {overall_bw:.2f} req/s")

@@ -22,8 +22,10 @@ class RateLimiter:
                 if self.curr_second < int(current_timestamp):
                     self.curr_second = int(current_timestamp)
                     self.bytes_in_curr_second = 0
+                
                 if self.bytes_in_curr_second + bytes_to_allow <= self.limit_bytes_per_second:
                     self.bytes_in_curr_second += bytes_to_allow
+                    print(f"[RateLimiter] Second: {self.curr_second}, Bytes used: {self.bytes_in_curr_second}/{self.limit_bytes_per_second}")
                     break            
             time_to_sleep = (int(current_timestamp) + 1) - current_timestamp
             time.sleep(time_to_sleep)
@@ -223,6 +225,24 @@ def main():
     parser.add_argument('--file_manager_type', type=str, required=True, choices=['kvc2', 'filemanager'], help='Type of file manager: kvc2 or filemanager')
     
     args = parser.parse_args()
+    
+    print("=" * 60)
+    print("Benchmark Configuration:")
+    print("=" * 60)
+    print(f"Max inflight requests:        {args.max_inflight_requests}")
+    print(f"Max write waiters:            {args.max_write_waiters}")
+    print(f"Workers per request:          {args.num_workers_per_single_request}")
+    print(f"KV base path:                 {args.kv_base_path}")
+    print(f"Number of files:              {args.num_files}")
+    print(f"File size:                    {args.file_size} bytes ({args.file_size / 1024 / 1024:.2f} MB)")
+    print(f"Requests to complete:         {args.requests_to_complete}")
+    if args.rate_limit_bytes_per_second > 0:
+        print(f"Rate limit:                   {args.rate_limit_bytes_per_second} bytes/sec ({args.rate_limit_bytes_per_second / 1024 / 1024 / 1024:.2f} GB/sec)")
+    else:
+        print(f"Rate limit:                   Unlimited")
+    print(f"File manager type:            {args.file_manager_type}")
+    print("=" * 60)
+    print()
     
     system = System(
         args.max_inflight_requests,

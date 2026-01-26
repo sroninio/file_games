@@ -15,7 +15,7 @@ class RateLimiter:
         self.curr_second = 0
         self.bytes_in_curr_second = 0
     
-    def wait_for_allowance(self, bytes_to_allow):
+    def wait_for_allowance(self, bytes_to_allow, is_read):
         while True:
             current_timestamp = time.time()
             with self.lock:
@@ -27,7 +27,8 @@ class RateLimiter:
                     self.bytes_in_curr_second += bytes_to_allow
                     break            
                 else:
-                    print(f"[RateLimiter] Second: {self.curr_second}, Request size: {bytes_to_allow}, Bytes used: {self.bytes_in_curr_second}/{self.limit_bytes_per_second}")
+                    op_type = "READ" if is_read else "WRITE"
+                    print(f"[RateLimiter] {op_type} - Second: {self.curr_second}, Request size: {bytes_to_allow}, Bytes used: {self.bytes_in_curr_second}/{self.limit_bytes_per_second}")
 
             time_to_sleep = (int(current_timestamp) + 1) - current_timestamp
             time.sleep(time_to_sleep)
@@ -103,14 +104,14 @@ class KVC2(BaseFileManager):
     def write_kv_single_file(self, worker_id, to_delete):
         self.write_semaphore.acquire()
         if self.rate_limiter:
-            self.rate_limiter.wait_for_allowance(self.file_size)
+            self.rate_limiter.wait_for_allowance(self.file_size, is_read=False)
         self._seek_to_random_block(worker_id)
         self.fds[worker_id].write(self.dummy_buf)
         self.write_semaphore.release()
     
     def read_kv_single_file(self, worker_id):
         if self.rate_limiter:
-            self.rate_limiter.wait_for_allowance(self.file_size)
+            self.rate_limiter.wait_for_allowance(self.file_size, is_read=True)
         self._seek_to_random_block(worker_id)
         dummy_read_buf = self.fds[worker_id].read(self.file_size)
 
@@ -131,7 +132,7 @@ class FileManager(BaseFileManager):
             os.remove(file_name_to_delete) 
         file_name_to_create = self.create_file_name()
         if self.rate_limiter:
-            self.rate_limiter.wait_for_allowance(self.file_size)
+            self.rate_limiter.wait_for_allowance(self.file_size, is_read=False)
         with open(file_name_to_create, 'wb') as f:
             f.write(self.dummy_buf)
         self.add_file(file_name_to_create)
@@ -146,7 +147,7 @@ class FileManager(BaseFileManager):
     def read_kv_single_file(self, worker_id):
         file_name = self.pop_random_file()
         if self.rate_limiter:
-            self.rate_limiter.wait_for_allowance(self.file_size)
+            self.rate_limiter.wait_for_allowance(self.file_size, is_read=True)
         with open(file_name, 'rb') as f:
             dummy_read_buf = f.read(self.file_size)
         self.add_file(file_name)

@@ -108,7 +108,7 @@ class KVC2(BaseFileManager):
         if self.rate_limiter:
             self.rate_limiter.wait_for_allowance(self.file_size)
         self._seek_to_random_block(worker_id)
-        self.fds[worker_id].read(self.file_size)
+        dummy_read_buf = self.fds[worker_id].read(self.file_size)
 
 class FileManager(BaseFileManager):
     def __init__(self, base_path: str, num_files: int, file_size: int, num_workers: int, max_write_waiters: int, rate_limit_bytes_per_second: int):
@@ -144,7 +144,7 @@ class FileManager(BaseFileManager):
         if self.rate_limiter:
             self.rate_limiter.wait_for_allowance(self.file_size)
         with open(file_name, 'rb') as f:
-            f.read(self.file_size)
+            dummy_read_buf = f.read(self.file_size)
         self.add_file(file_name)
 
     def pop_random_file(self):
@@ -157,12 +157,18 @@ class FileManager(BaseFileManager):
             self.files.add_element(file_name)
 
 class System:
-    def __init__(self, max_inflight_requests, max_write_waiters, num_workers_per_single_request, kv_base_path, num_files, file_size, requests_to_complete, rate_limit_bytes_per_second):
+    def __init__(self, max_inflight_requests, max_write_waiters, num_workers_per_single_request, kv_base_path, num_files, file_size, requests_to_complete, rate_limit_bytes_per_second, file_manager_type):
         self.max_inflight_requests = max_inflight_requests
         self.completed_requests = 0
         self.requests_to_complete = requests_to_complete
         self.num_workers_per_single_request = num_workers_per_single_request
-        self.file_manager = FileManager(kv_base_path, num_files, file_size, num_workers_per_single_request, max_write_waiters, rate_limit_bytes_per_second)
+        
+        if file_manager_type == 'kvc2':
+            self.file_manager = KVC2(kv_base_path, num_files, file_size, num_workers_per_single_request, max_write_waiters, rate_limit_bytes_per_second)
+        elif file_manager_type == 'filemanager':
+            self.file_manager = FileManager(kv_base_path, num_files, file_size, num_workers_per_single_request, max_write_waiters, rate_limit_bytes_per_second)
+        else:
+            raise ValueError(f"Unknown file_manager_type: {file_manager_type}. Must be 'kvc2' or 'filemanager'")
 
             
     async def execute_single_request(self):
@@ -214,6 +220,7 @@ def main():
     parser.add_argument('file_size', type=int, help='Size of each file in bytes')
     parser.add_argument('requests_to_complete', type=int, help='Number of requests to complete')
     parser.add_argument('rate_limit_bytes_per_second', type=int, help='Rate limit in bytes per second (0 = no limit)')
+    parser.add_argument('file_manager_type', type=str, choices=['kvc2', 'filemanager'], help='Type of file manager: kvc2 or filemanager')
     
     args = parser.parse_args()
     
@@ -225,7 +232,8 @@ def main():
         args.num_files,
         args.file_size,
         args.requests_to_complete,
-        args.rate_limit_bytes_per_second
+        args.rate_limit_bytes_per_second,
+        args.file_manager_type
     )
     
     asyncio.run(system.run_benchmark())

@@ -1,16 +1,14 @@
 #!/usr/bin/env python3
 
 import os
-import subprocess
-from queue import Queue
-import threading
+import shutil
 from threading import BoundedSemaphore, Lock
 import random
 import asyncio
 import time
 from abc import ABC, abstractmethod
 
-class RateLimitter:
+class RateLimiter:
     def __init__(self, limit_bytes_per_second):
         self.limit_bytes_per_second = limit_bytes_per_second
         self.lock = Lock()
@@ -33,7 +31,6 @@ class RateLimitter:
 
 class EfficientRandomPopContainer:
     def __init__(self, max_elements):
-        self.max_elements = max_elements
         self.elements = [None] * max_elements
         self.curr_elements = 0
     
@@ -55,12 +52,12 @@ class BaseFileManager(ABC):
         self.file_size = file_size
         self.num_workers = num_workers
         self.max_write_waiters = max_write_waiters
-        self.rate_limiter = RateLimitter(rate_limit_bytes_per_second) if rate_limit_bytes_per_second > 0 else None
+        self.rate_limiter = RateLimiter(rate_limit_bytes_per_second) if rate_limit_bytes_per_second > 0 else None
         self.write_semaphore = BoundedSemaphore(max_write_waiters)
         self.dummy_buf = bytearray(file_size)
         
         if os.path.exists(self.base_path):
-            subprocess.run(f"rm -rf {self.base_path}", shell=True, check=True)
+            shutil.rmtree(self.base_path)
         os.makedirs(self.base_path)
     
     @abstractmethod
@@ -72,11 +69,11 @@ class BaseFileManager(ABC):
         pass
     
     def async_write_kv(self):
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return asyncio.gather(*(loop.run_in_executor(None, self.write_kv_single_file, i, True) for i in range(self.num_workers)))
 
     def async_read_kv(self):
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return asyncio.gather(*(loop.run_in_executor(None, self.read_kv_single_file, i) for i in range(self.num_workers)))
     
     def sync_wait_for_place_in_write_queue(self):
@@ -100,16 +97,18 @@ class KVC2(BaseFileManager):
         self.fds[worker_id].seek(offset)
 
     def write_kv_single_file(self, worker_id, to_delete):
+        self.write_semaphore.acquire()
         if self.rate_limiter:
             self.rate_limiter.wait_for_allowance(self.file_size)
         self._seek_to_random_block(worker_id)
         self.fds[worker_id].write(self.dummy_buf)
+        self.write_semaphore.release()
     
     def read_kv_single_file(self, worker_id):
         if self.rate_limiter:
             self.rate_limiter.wait_for_allowance(self.file_size)
         self._seek_to_random_block(worker_id)
-        dummy_read_buf = self.fds[worker_id].read(self.file_size)
+        self.fds[worker_id].read(self.file_size)
 
 class FileManager(BaseFileManager):
     def __init__(self, base_path: str, num_files: int, file_size: int, num_workers: int, max_write_waiters: int, rate_limit_bytes_per_second: int):
@@ -145,7 +144,7 @@ class FileManager(BaseFileManager):
         if self.rate_limiter:
             self.rate_limiter.wait_for_allowance(self.file_size)
         with open(file_name, 'rb') as f:
-            dummy_read_buf = f.read(self.file_size)
+            f.read(self.file_size)
         self.add_file(file_name)
 
     def pop_random_file(self):

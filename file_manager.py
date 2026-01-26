@@ -188,7 +188,7 @@ class System:
             self.completed_requests += len(done)
             pending_requests = pending 
             for _ in range(len(done)):
-                asyncio.create_task(self.file_manager.async_write_kv())
+                asyncio.ensure_future(self.file_manager.async_write_kv())
             await asyncio.sleep(0)
             
             if self.completed_requests - last_print_count >= 1000:

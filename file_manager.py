@@ -127,11 +127,16 @@ class FileManager(BaseFileManager):
     def __init__(self, base_path: str, num_files: int, file_size: int, num_workers: int, max_write_waiters: int, rate_limit_bytes_per_second: int):
         super().__init__(base_path, num_files, file_size, num_workers, max_write_waiters, rate_limit_bytes_per_second)
         self.files = EfficientRandomPopContainer(num_files)
-        self.files_lock = Lock()  
+        self.files_lock = Lock()
         self.next_id = 0
-        
         for _ in range(num_files):
-            self.write_kv_single_file(0, False)
+            self._create_initial_file()
+    
+    def _create_initial_file(self):
+        file_name_to_create = self.create_file_name()
+        with open(file_name_to_create, 'wb') as f:
+            f.write(self.dummy_buf)
+        self.add_file(file_name_to_create)
     
     def write_kv_single_file(self, worker_id, to_delete):
         self.write_semaphore.acquire()

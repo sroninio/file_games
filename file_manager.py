@@ -169,6 +169,17 @@ class FileManager(BaseFileManager):
         with self.files_lock:
             self.files.add_element(file_name)
 
+class FileManagerNoEviction(FileManager):
+    def write_kv_single_file(self, worker_id, to_delete):
+        self.write_semaphore.acquire()
+        file_name = self.pop_random_file()
+        if self.rate_limiter:
+            self.rate_limiter.wait_for_allowance(self.file_size, is_read=False)
+        with open(file_name, 'wb') as f:
+            f.write(self.dummy_buf)
+        self.add_file(file_name)
+        self.write_semaphore.release()
+
 class System:
     def __init__(self, max_inflight_requests, max_write_waiters, num_workers_per_single_request, kv_base_path, num_files, file_size, requests_to_complete, rate_limit_bytes_per_second, file_manager_type):
         self.max_inflight_requests = max_inflight_requests
@@ -180,8 +191,10 @@ class System:
             self.file_manager = KVC2(kv_base_path, num_files, file_size, num_workers_per_single_request, max_write_waiters, max_inflight_requests, rate_limit_bytes_per_second)
         elif file_manager_type == 'filemanager':
             self.file_manager = FileManager(kv_base_path, num_files, file_size, num_workers_per_single_request, max_write_waiters, rate_limit_bytes_per_second)
+        elif file_manager_type == 'filemanagernoeviction':
+            self.file_manager = FileManagerNoEviction(kv_base_path, num_files, file_size, num_workers_per_single_request, max_write_waiters, rate_limit_bytes_per_second)
         else:
-            raise ValueError(f"Unknown file_manager_type: {file_manager_type}. Must be 'kvc2' or 'filemanager'")
+            raise ValueError(f"Unknown file_manager_type: {file_manager_type}. Must be 'kvc2', 'filemanager', or 'filemanagernoeviction'")
 
             
     def execute_single_request(self):
@@ -238,7 +251,7 @@ def main():
     parser.add_argument('--file_size', type=int, required=True, help='Size of each file in bytes')
     parser.add_argument('--requests_to_complete', type=int, required=True, help='Number of requests to complete')
     parser.add_argument('--rate_limit_bytes_per_second', type=int, required=True, help='Rate limit in bytes per second (0 = no limit)')
-    parser.add_argument('--file_manager_type', type=str, required=True, choices=['kvc2', 'filemanager'], help='Type of file manager: kvc2 or filemanager')
+    parser.add_argument('--file_manager_type', type=str, required=True, choices=['kvc2', 'filemanager', 'filemanagernoeviction'], help='Type of file manager: kvc2, filemanager, or filemanagernoeviction')
     
     args = parser.parse_args()
     

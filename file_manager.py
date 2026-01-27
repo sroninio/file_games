@@ -75,11 +75,12 @@ class BaseFileManager(ABC):
     
     def async_write_kv(self):
         loop = asyncio.get_running_loop()
-        return asyncio.gather(*(loop.run_in_executor(None, self.write_kv_single_file, i, True) for i in range(self.num_workers)))
+        for i in range(self.num_workers):
+            loop.run_in_executor(None, self.write_kv_single_file, i, True)
 
-    def async_read_kv(self):
+    async def async_read_kv(self):
         loop = asyncio.get_running_loop()
-        return asyncio.gather(*(loop.run_in_executor(None, self.read_kv_single_file, i) for i in range(self.num_workers)))
+        return await asyncio.gather(*(loop.run_in_executor(None, self.read_kv_single_file, i) for i in range(self.num_workers)))
     
     def sync_wait_for_place_in_write_queue(self):
         self.write_semaphore.acquire()
@@ -176,8 +177,8 @@ class System:
             raise ValueError(f"Unknown file_manager_type: {file_manager_type}. Must be 'kvc2' or 'filemanager'")
 
             
-    async def execute_single_request(self):
-        return self.file_manager.async_read_kv()
+    def execute_single_request(self):
+        return asyncio.create_task(self.file_manager.async_read_kv())
 
     async def run_benchmark(self):
         start_time = time.time()
@@ -193,7 +194,7 @@ class System:
             self.completed_requests += len(done)
             pending_requests = pending 
             for _ in range(len(done)):
-                asyncio.ensure_future(self.file_manager.async_write_kv())
+                self.file_manager.async_write_kv()
             await asyncio.sleep(0)
             
             if self.completed_requests - last_print_count >= 1000:

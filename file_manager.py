@@ -138,6 +138,7 @@ class FileManager(BaseFileManager):
                 assert filename.startswith('f') and filename[1:].isdigit(), f"Invalid file format: {filename}"
                 file_id = int(filename[1:])
                 max_id = max(max_id, file_id)
+                self.add_file(os.path.join(self.base_path, filename))
             self.next_id = max_id + 1
     
     def _create_initial_file(self):

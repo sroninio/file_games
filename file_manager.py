@@ -52,7 +52,7 @@ class EfficientRandomPopContainer:
         return element
 
 class BaseFileManager(ABC):
-    def __init__(self, base_path: str, num_files: int, file_size: int, num_workers: int, max_write_waiters: int, rate_limit_bytes_per_second: int):
+    def __init__(self, base_path: str, num_files: int, file_size: int, num_workers: int, max_write_waiters: int, rate_limit_bytes_per_second: int, recreate_dir: bool):
         self.base_path = base_path
         self.num_files = num_files
         self.file_size = file_size
@@ -61,10 +61,10 @@ class BaseFileManager(ABC):
         self.rate_limiter = RateLimiter(rate_limit_bytes_per_second) if rate_limit_bytes_per_second > 0 else None
         self.write_semaphore = BoundedSemaphore(max_write_waiters)
         self.dummy_buf = bytearray(file_size)
-        
-        if os.path.exists(self.base_path):
-            shutil.rmtree(self.base_path)
-        os.makedirs(self.base_path)
+        if recreate_dir:
+            if os.path.exists(self.base_path):
+                shutil.rmtree(self.base_path)
+            os.makedirs(self.base_path)
     
     @abstractmethod
     def write_kv_single_file(self, worker_id, to_delete):
@@ -88,8 +88,8 @@ class BaseFileManager(ABC):
         self.write_semaphore.release()
 
 class KVC2(BaseFileManager):
-    def __init__(self, base_path: str, num_files: int, file_size: int, num_workers: int, max_write_waiters: int, max_inflight_requests: int, rate_limit_bytes_per_second: int):
-        super().__init__(base_path, num_files, file_size, num_workers, max_write_waiters, rate_limit_bytes_per_second)
+    def __init__(self, base_path: str, num_files: int, file_size: int, num_workers: int, max_write_waiters: int, max_inflight_requests: int, rate_limit_bytes_per_second: int, recreate_dir: bool):
+        super().__init__(base_path, num_files, file_size, num_workers, max_write_waiters, rate_limit_bytes_per_second, recreate_dir)
         kvc2_file_path = os.path.join(self.base_path, "kvc2")
         with open(kvc2_file_path, 'wb+') as f:
             for _ in range(num_files):
@@ -124,13 +124,21 @@ class KVC2(BaseFileManager):
         self.fd_queue.put(fd)
 
 class FileManager(BaseFileManager):
-    def __init__(self, base_path: str, num_files: int, file_size: int, num_workers: int, max_write_waiters: int, rate_limit_bytes_per_second: int):
-        super().__init__(base_path, num_files, file_size, num_workers, max_write_waiters, rate_limit_bytes_per_second)
+    def __init__(self, base_path: str, num_files: int, file_size: int, num_workers: int, max_write_waiters: int, rate_limit_bytes_per_second: int, recreate_dir: bool):
+        super().__init__(base_path, num_files, file_size, num_workers, max_write_waiters, rate_limit_bytes_per_second, recreate_dir)
         self.files = EfficientRandomPopContainer(num_files)
         self.files_lock = Lock()
         self.next_id = 0
-        for _ in range(num_files):
-            self._create_initial_file()
+        if recreate_dir:
+            for _ in range(num_files):
+                self._create_initial_file()
+        else:
+            max_id = -1
+            for filename in os.listdir(self.base_path):
+                assert filename.startswith('f') and filename[1:].isdigit(), f"Invalid file format: {filename}"
+                file_id = int(filename[1:])
+                max_id = max(max_id, file_id)
+            self.next_id = max_id + 1
     
     def _create_initial_file(self):
         file_name_to_create = self.create_file_name()
@@ -186,18 +194,18 @@ class FileManagerNoEviction(FileManager):
         self.write_semaphore.release()
 
 class System:
-    def __init__(self, max_inflight_requests, max_write_waiters, num_workers_per_single_request, kv_base_path, num_files, file_size, requests_to_complete, rate_limit_bytes_per_second, file_manager_type):
+    def __init__(self, max_inflight_requests, max_write_waiters, num_workers_per_single_request, kv_base_path, num_files, file_size, requests_to_complete, rate_limit_bytes_per_second, file_manager_type, recreate_dir):
         self.max_inflight_requests = max_inflight_requests
         self.completed_requests = 0
         self.requests_to_complete = requests_to_complete
         self.num_workers_per_single_request = num_workers_per_single_request
         
         if file_manager_type == 'kvc2':
-            self.file_manager = KVC2(kv_base_path, num_files, file_size, num_workers_per_single_request, max_write_waiters, max_inflight_requests, rate_limit_bytes_per_second)
+            self.file_manager = KVC2(kv_base_path, num_files, file_size, num_workers_per_single_request, max_write_waiters, max_inflight_requests, rate_limit_bytes_per_second, recreate_dir)
         elif file_manager_type == 'filemanager':
-            self.file_manager = FileManager(kv_base_path, num_files, file_size, num_workers_per_single_request, max_write_waiters, rate_limit_bytes_per_second)
+            self.file_manager = FileManager(kv_base_path, num_files, file_size, num_workers_per_single_request, max_write_waiters, rate_limit_bytes_per_second, recreate_dir)
         elif file_manager_type == 'filemanagernoeviction':
-            self.file_manager = FileManagerNoEviction(kv_base_path, num_files, file_size, num_workers_per_single_request, max_write_waiters, rate_limit_bytes_per_second)
+            self.file_manager = FileManagerNoEviction(kv_base_path, num_files, file_size, num_workers_per_single_request, max_write_waiters, rate_limit_bytes_per_second, recreate_dir)
         else:
             raise ValueError(f"Unknown file_manager_type: {file_manager_type}. Must be 'kvc2', 'filemanager', or 'filemanagernoeviction'")
 
@@ -257,6 +265,7 @@ def main():
     parser.add_argument('--requests_to_complete', type=int, required=True, help='Number of requests to complete')
     parser.add_argument('--rate_limit_bytes_per_second', type=int, required=True, help='Rate limit in bytes per second (0 = no limit)')
     parser.add_argument('--file_manager_type', type=str, required=True, choices=['kvc2', 'filemanager', 'filemanagernoeviction'], help='Type of file manager: kvc2, filemanager, or filemanagernoeviction')
+    parser.add_argument('--recreate_dir', action='store_true', help='Recreate directory before starting')
     
     args = parser.parse_args()
     
@@ -287,7 +296,8 @@ def main():
         args.file_size,
         args.requests_to_complete,
         args.rate_limit_bytes_per_second,
-        args.file_manager_type
+        args.file_manager_type,
+        args.recreate_dir
     )
     
     asyncio.run(system.run_benchmark())

@@ -28,7 +28,7 @@ class RateLimiter:
                     break            
                 else:
                     op_type = "READ" if is_read else "WRITE"
-                    print(f"[RateLimiter] {op_type} - Second: {self.curr_second}, Request size: {bytes_to_allow}, Bytes used: {self.bytes_in_curr_second}/{self.limit_bytes_per_second}", flush=True)
+                    #print(f"[RateLimiter] {op_type} - Second: {self.curr_second}, Request size: {bytes_to_allow}, Bytes used: {self.bytes_in_curr_second}/{self.limit_bytes_per_second}", flush=True)
 
             time_to_sleep = (int(current_timestamp) + 1) - current_timestamp
             time.sleep(time_to_sleep)

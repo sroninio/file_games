@@ -3,6 +3,7 @@
 import os
 import shutil
 from threading import BoundedSemaphore, Lock
+from queue import Queue
 import random
 import asyncio
 import time
@@ -87,34 +88,40 @@ class BaseFileManager(ABC):
         self.write_semaphore.release()
 
 class KVC2(BaseFileManager):
-    def __init__(self, base_path: str, num_files: int, file_size: int, num_workers: int, max_write_waiters: int, rate_limit_bytes_per_second: int):
+    def __init__(self, base_path: str, num_files: int, file_size: int, num_workers: int, max_write_waiters: int, max_inflight_requests: int, rate_limit_bytes_per_second: int):
         super().__init__(base_path, num_files, file_size, num_workers, max_write_waiters, rate_limit_bytes_per_second)
         kvc2_file_path = os.path.join(self.base_path, "kvc2")
-        
         with open(kvc2_file_path, 'wb+') as f:
             for _ in range(num_files):
                 f.write(self.dummy_buf)
-            f.flush()      
-        self.fds = [open(kvc2_file_path, 'rb+') for _ in range(num_workers)]
+            f.flush()
+        num_fds = (max_inflight_requests + max_write_waiters) * num_workers
+        self.fd_queue = Queue(maxsize=num_fds)
+        for _ in range(num_fds):
+            self.fd_queue.put(open(kvc2_file_path, 'rb+'))
     
-    def _seek_to_random_block(self, worker_id):
+    def _seek_to_random_block(self, fd):
         random_block = random.randint(0, self.num_files - 1)
         offset = random_block * self.file_size
-        self.fds[worker_id].seek(offset)
+        fd.seek(offset)
 
     def write_kv_single_file(self, worker_id, to_delete):
         self.write_semaphore.acquire()
+        fd = self.fd_queue.get(block=False)
         if self.rate_limiter:
             self.rate_limiter.wait_for_allowance(self.file_size, is_read=False)
-        self._seek_to_random_block(worker_id)
-        self.fds[worker_id].write(self.dummy_buf)
+        self._seek_to_random_block(fd)
+        fd.write(self.dummy_buf)
+        self.fd_queue.put(fd)
         self.write_semaphore.release()
     
     def read_kv_single_file(self, worker_id):
+        fd = self.fd_queue.get(block=False)
         if self.rate_limiter:
             self.rate_limiter.wait_for_allowance(self.file_size, is_read=True)
-        self._seek_to_random_block(worker_id)
-        dummy_read_buf = self.fds[worker_id].read(self.file_size)
+        self._seek_to_random_block(fd)
+        dummy_read_buf = fd.read(self.file_size)
+        self.fd_queue.put(fd)
 
 class FileManager(BaseFileManager):
     def __init__(self, base_path: str, num_files: int, file_size: int, num_workers: int, max_write_waiters: int, rate_limit_bytes_per_second: int):
@@ -170,7 +177,7 @@ class System:
         self.num_workers_per_single_request = num_workers_per_single_request
         
         if file_manager_type == 'kvc2':
-            self.file_manager = KVC2(kv_base_path, num_files, file_size, num_workers_per_single_request, max_write_waiters, rate_limit_bytes_per_second)
+            self.file_manager = KVC2(kv_base_path, num_files, file_size, num_workers_per_single_request, max_write_waiters, max_inflight_requests, rate_limit_bytes_per_second)
         elif file_manager_type == 'filemanager':
             self.file_manager = FileManager(kv_base_path, num_files, file_size, num_workers_per_single_request, max_write_waiters, rate_limit_bytes_per_second)
         else:

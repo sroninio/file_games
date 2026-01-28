@@ -300,7 +300,7 @@ def main():
     parser.add_argument('--requests_to_complete', type=int, required=True, help='Number of requests to complete')
     parser.add_argument('--rate_limit_bytes_per_second', type=int, required=True, help='Rate limit in bytes per second (0 = no limit)')
     parser.add_argument('--file_manager_type', type=str, required=True, choices=['kvc2', 'filemanager', 'filemanagernoeviction', 'filemanagernoevictionnoopen'], help='Type of file manager: kvc2, filemanager, filemanagernoeviction, or filemanagernoevictionnoopen')
-    parser.add_argument('--recreate_dir', type=lambda x: x.lower() == 'true', required=True, help='Recreate directory before starting (true/false)')
+    parser.add_argument('--recreate_dir', type=lambda x: x.lower() in ['true', '1'], required=True, help='Recreate directory before starting (true/false or 1/0)')
     
     args = parser.parse_args()
     

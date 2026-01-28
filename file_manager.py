@@ -194,6 +194,38 @@ class FileManagerNoEviction(FileManager):
         self.add_file(file_name)
         self.write_semaphore.release()
 
+class FileManagerNoEvictionNoOpen(FileManagerNoEviction):
+    def __init__(self, base_path: str, num_files: int, file_size: int, num_workers: int, max_write_waiters: int, rate_limit_bytes_per_second: int, recreate_dir: bool):
+        super().__init__(base_path, num_files, file_size, num_workers, max_write_waiters, rate_limit_bytes_per_second, recreate_dir)
+        self.fd_map = {}
+        file_list = []
+        while self.files.curr_elements > 0:
+            file_name = self.files.pop_random_element()
+            file_list.append(file_name)
+            self.fd_map[file_name] = open(file_name, 'rb+')
+        for file_name in file_list:
+            self.files.add_element(file_name)
+    
+    def write_kv_single_file(self, worker_id, to_delete):
+        self.write_semaphore.acquire()
+        file_name = self.pop_random_file()
+        if self.rate_limiter:
+            self.rate_limiter.wait_for_allowance(self.file_size, is_read=False)
+        fd = self.fd_map[file_name]
+        fd.seek(0)
+        fd.write(self.dummy_buf)
+        self.add_file(file_name)
+        self.write_semaphore.release()
+    
+    def read_kv_single_file(self, worker_id):
+        file_name = self.pop_random_file()
+        if self.rate_limiter:
+            self.rate_limiter.wait_for_allowance(self.file_size, is_read=True)
+        fd = self.fd_map[file_name]
+        fd.seek(0)
+        dummy_read_buf = fd.read(self.file_size)
+        self.add_file(file_name)
+
 class System:
     def __init__(self, max_inflight_requests, max_write_waiters, num_workers_per_single_request, kv_base_path, num_files, file_size, requests_to_complete, rate_limit_bytes_per_second, file_manager_type, recreate_dir):
         self.max_inflight_requests = max_inflight_requests
@@ -207,8 +239,10 @@ class System:
             self.file_manager = FileManager(kv_base_path, num_files, file_size, num_workers_per_single_request, max_write_waiters, rate_limit_bytes_per_second, recreate_dir)
         elif file_manager_type == 'filemanagernoeviction':
             self.file_manager = FileManagerNoEviction(kv_base_path, num_files, file_size, num_workers_per_single_request, max_write_waiters, rate_limit_bytes_per_second, recreate_dir)
+        elif file_manager_type == 'filemanagernoevictionnoopen':
+            self.file_manager = FileManagerNoEvictionNoOpen(kv_base_path, num_files, file_size, num_workers_per_single_request, max_write_waiters, rate_limit_bytes_per_second, recreate_dir)
         else:
-            raise ValueError(f"Unknown file_manager_type: {file_manager_type}. Must be 'kvc2', 'filemanager', or 'filemanagernoeviction'")
+            raise ValueError(f"Unknown file_manager_type: {file_manager_type}. Must be 'kvc2', 'filemanager', 'filemanagernoeviction', or 'filemanagernoevictionnoopen'")
 
             
     def execute_single_request(self):
@@ -265,8 +299,8 @@ def main():
     parser.add_argument('--file_size', type=int, required=True, help='Size of each file in bytes')
     parser.add_argument('--requests_to_complete', type=int, required=True, help='Number of requests to complete')
     parser.add_argument('--rate_limit_bytes_per_second', type=int, required=True, help='Rate limit in bytes per second (0 = no limit)')
-    parser.add_argument('--file_manager_type', type=str, required=True, choices=['kvc2', 'filemanager', 'filemanagernoeviction'], help='Type of file manager: kvc2, filemanager, or filemanagernoeviction')
-    parser.add_argument('--recreate_dir', action='store_true', help='Recreate directory before starting')
+    parser.add_argument('--file_manager_type', type=str, required=True, choices=['kvc2', 'filemanager', 'filemanagernoeviction', 'filemanagernoevictionnoopen'], help='Type of file manager: kvc2, filemanager, filemanagernoeviction, or filemanagernoevictionnoopen')
+    parser.add_argument('--recreate_dir', type=lambda x: x.lower() == 'true', required=True, help='Recreate directory before starting (true/false)')
     
     args = parser.parse_args()
     
